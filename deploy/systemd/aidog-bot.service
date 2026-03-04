@@ -1,0 +1,27 @@
+[Unit]
+Description=AIDOG auto-buy bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=replace-with-user
+Group=replace-with-user
+WorkingDirectory=/opt/aidog-bot
+EnvironmentFile=/opt/aidog-bot/.env
+ExecStart=/opt/aidog-bot/.runtime/node/bin/node /opt/aidog-bot/scripts/aidog-auto-buy.mjs
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+Environment=HOME=/opt/aidog-bot
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/aidog-bot/data
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

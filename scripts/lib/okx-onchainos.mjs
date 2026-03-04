@@ -10,6 +10,7 @@ export const BASE_USDC_TOKEN_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda029
 const DEFAULT_OKX_API_KEY = "03f0b376-251c-4618-862e-ae92929e0416";
 const DEFAULT_OKX_SECRET_KEY = "652ECE8FF13210065B0851FFDA9191F7";
 const DEFAULT_OKX_PASSPHRASE = "onchainOS#666";
+const RETRYABLE_OKX_CODES = new Set(["50011"]);
 
 let envLoaded = false;
 
@@ -194,33 +195,75 @@ async function okxFetch(method, pathWithQuery, body) {
   };
 
   const bodyStr = body ? JSON.stringify(body) : "";
-  const timestamp = new Date().toISOString();
-  const signature = crypto
-    .createHmac("sha256", credentials.secretKey)
-    .update(timestamp + method + pathWithQuery + bodyStr)
-    .digest("base64");
+  const maxRetries = Number(process.env.OKX_MAX_RETRIES || 3);
+  const retryBaseMs = Number(process.env.OKX_RETRY_BASE_MS || 500);
 
-  const response = await fetch(`${OKX_BASE_URL}${pathWithQuery}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      "OK-ACCESS-KEY": credentials.apiKey,
-      "OK-ACCESS-SIGN": signature,
-      "OK-ACCESS-PASSPHRASE": credentials.passphrase,
-      "OK-ACCESS-TIMESTAMP": timestamp,
-    },
-    ...(body ? { body: bodyStr } : {}),
-    signal: AbortSignal.timeout(10000),
-  });
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const timestamp = new Date().toISOString();
+    const signature = crypto
+      .createHmac("sha256", credentials.secretKey)
+      .update(timestamp + method + pathWithQuery + bodyStr)
+      .digest("base64");
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    try {
+      const response = await fetch(`${OKX_BASE_URL}${pathWithQuery}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "OK-ACCESS-KEY": credentials.apiKey,
+          "OK-ACCESS-SIGN": signature,
+          "OK-ACCESS-PASSPHRASE": credentials.passphrase,
+          "OK-ACCESS-TIMESTAMP": timestamp,
+        },
+        ...(body ? { body: bodyStr } : {}),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        if (attempt < maxRetries && (response.status === 429 || response.status >= 500)) {
+          await sleep(getRetryDelay(retryBaseMs, attempt));
+          continue;
+        }
+
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const payload = await response.json();
+      if (payload.code === "0") {
+        return payload.data;
+      }
+
+      if (attempt < maxRetries && RETRYABLE_OKX_CODES.has(String(payload.code))) {
+        await sleep(getRetryDelay(retryBaseMs, attempt));
+        continue;
+      }
+
+      throw new Error(`${payload.code}: ${payload.msg || "API error"}`);
+    } catch (error) {
+      if (attempt >= maxRetries || !isRetryableFetchError(error)) {
+        throw error;
+      }
+
+      await sleep(getRetryDelay(retryBaseMs, attempt));
+    }
   }
 
-  const payload = await response.json();
-  if (payload.code !== "0") {
-    throw new Error(`${payload.code}: ${payload.msg || "API error"}`);
+  throw new Error("OKX request exhausted retries");
+}
+
+function isRetryableFetchError(error) {
+  if (!(error instanceof Error)) {
+    return false;
   }
 
-  return payload.data;
+  return (
+    error.name === "TimeoutError" ||
+    error.name === "AbortError" ||
+    /timed out/i.test(error.message) ||
+    /fetch failed/i.test(error.message)
+  );
+}
+
+function getRetryDelay(baseMs, attempt) {
+  return Math.round(baseMs * 2 ** attempt + Math.random() * 250);
 }
