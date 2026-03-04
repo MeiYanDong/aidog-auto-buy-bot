@@ -1,0 +1,12 @@
+{
+  "name": "okx-onchainos-aidog",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "monitor:aidog": "node ./scripts/aidog-price-monitor.mjs",
+    "buy:aidog": "node ./scripts/aidog-auto-buy.mjs"
+  },
+  "dependencies": {
+    "ethers": "^6.15.0"
+  }
+}
