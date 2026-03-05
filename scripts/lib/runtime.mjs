@@ -89,11 +89,15 @@ export function getTimeZoneParts(timeZone, date = new Date()) {
       .map((part) => [part.type, part.value]),
   );
 
+  // Some ICU/locale combinations can emit hour "24" for local midnight.
+  // Normalize it to 0 so downstream scheduling logic treats it as 00:xx.
+  const normalizedHour = Number(parts.hour) === 24 ? 0 : Number(parts.hour);
+
   return {
     year: Number(parts.year),
     month: Number(parts.month),
     day: Number(parts.day),
-    hour: Number(parts.hour),
+    hour: normalizedHour,
     minute: Number(parts.minute),
     second: Number(parts.second),
     dayKey: `${parts.year}-${parts.month}-${parts.day}`,
