@@ -34,7 +34,7 @@ export function loadDotEnv() {
       }
 
       const key = line.slice(0, equalIndex).trim();
-      let value = line.slice(equalIndex + 1).trim();
+      let value = stripInlineEnvComment(line.slice(equalIndex + 1).trim());
 
       if (
         (value.startsWith('"') && value.endsWith('"')) ||
@@ -50,6 +50,31 @@ export function loadDotEnv() {
   }
 
   envLoaded = true;
+}
+
+function stripInlineEnvComment(rawValue) {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  for (let i = 0; i < rawValue.length; i += 1) {
+    const char = rawValue[i];
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && char === "#" && i > 0 && /\s/.test(rawValue[i - 1])) {
+      return rawValue.slice(0, i).trimEnd();
+    }
+  }
+
+  return rawValue;
 }
 
 export function usingSharedOkxCredentials() {

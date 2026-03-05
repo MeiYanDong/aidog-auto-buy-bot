@@ -124,7 +124,8 @@ def load_env_map(path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        result[key] = strip_wrapping_quotes(value.strip())
+        value = strip_inline_env_comment(value.strip())
+        result[key] = strip_wrapping_quotes(value)
     return result
 
 
@@ -132,6 +133,23 @@ def strip_wrapping_quotes(value: str) -> str:
     if len(value) >= 2 and ((value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'"))):
         return value[1:-1]
     return value
+
+
+def strip_inline_env_comment(raw_value: str) -> str:
+    in_single_quote = False
+    in_double_quote = False
+
+    for i, char in enumerate(raw_value):
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            continue
+        if not in_single_quote and not in_double_quote and char == "#" and i > 0 and raw_value[i - 1].isspace():
+            return raw_value[:i].rstrip()
+
+    return raw_value
 
 
 def require_env(env_map: dict[str, str], key: str) -> str:
