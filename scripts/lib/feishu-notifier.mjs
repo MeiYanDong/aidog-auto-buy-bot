@@ -26,6 +26,14 @@ export function createFeishuNotifier(config, logger) {
         return false;
       }
 
+      if (payload.strategyId === "daily_dca" && !config.notifyDailyDcaSuccess) {
+        return false;
+      }
+
+      if (payload.strategyId === "deep_discount_buy" && !config.notifyDeepBuySuccess) {
+        return false;
+      }
+
       return send("买入成功", [
         `钱包：${payload.wallet}`,
         `策略：${payload.strategy}`,
@@ -75,6 +83,10 @@ export function createFeishuNotifier(config, logger) {
     },
     async notifyGuard(title, lines, options = {}) {
       if (!config.notifyGuardEvents) {
+        return false;
+      }
+
+      if (options.guardType === "deep-buy-cooldown" && !config.notifyDeepBuyCooldownSkip) {
         return false;
       }
 

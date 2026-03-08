@@ -59,6 +59,54 @@ async function runMockTest() {
     assert.equal(suppressed, false, "Dry-run startup should be suppressed.");
     assert.equal(receivedPayloads.length, 7, "Suppressed startup should not send any extra payload.");
 
+    const filteredTradeNotifier = createTestNotifier({
+      webhookUrl,
+      botName: "AIDOG Bot 测试",
+      notifyDailyDcaSuccess: false,
+      notifyDeepBuySuccess: true,
+    });
+    const suppressedDailyDcaSuccess = await filteredTradeNotifier.notifyTradeSuccess({
+      wallet: "0xE4d5...0B6d",
+      strategyId: "daily_dca",
+      strategy: "每日定投（测试）",
+      triggerPriceUsd: 0.00456,
+      txHash: "0xtestdca123",
+      explorerUrl: "https://basescan.org/tx/0xtestdca123",
+      spentUsdc: "2.0",
+      receivedAidog: "440.123456789",
+      route: "PancakeSwap V3 -> Uniswap V2",
+      walletUsdcAfter: "14.0",
+      walletAidogAfter: "880.289620754737618887",
+      dailyBuyCount: 1,
+      walletExplorerUrl: "https://basescan.org/address/0xE4d5bE169574FC9E18Edaa813790f079e1630B6d",
+    });
+    assert.equal(
+      suppressedDailyDcaSuccess,
+      false,
+      "Daily DCA success should be suppressed when notifyDailyDcaSuccess=false.",
+    );
+    assert.equal(receivedPayloads.length, 7, "Suppressed daily DCA success should not send any extra payload.");
+
+    const filteredGuardNotifier = createTestNotifier({
+      webhookUrl,
+      botName: "AIDOG Bot 测试",
+      notifyDeepBuyCooldownSkip: false,
+    });
+    const suppressedCooldownGuard = await filteredGuardNotifier.notifyGuard("深跌加仓跳过：冷却时间未结束。", [
+      "钱包：0xE4d5...0B6d",
+      "详情：{\"nextEligibleAt\":\"2026-03-10T00:00:00.000Z\",\"cooldownDays\":5}",
+    ], {
+      guardType: "deep-buy-cooldown",
+      throttleKey: `test-cooldown-guard-${Date.now()}`,
+      throttleMs: 0,
+    });
+    assert.equal(
+      suppressedCooldownGuard,
+      false,
+      "Deep-buy cooldown guard should be suppressed when notifyDeepBuyCooldownSkip=false.",
+    );
+    assert.equal(receivedPayloads.length, 7, "Suppressed cooldown guard should not send any extra payload.");
+
     const outputPath = path.resolve("data/logs/feishu-card-test-mock.json");
     ensureDirectory(path.dirname(outputPath));
     fs.writeFileSync(
@@ -139,6 +187,9 @@ function createTestNotifier(overrides = {}) {
       notifyGuardEvents: true,
       notifyDryRun: true,
       notifyWeeklySummary: true,
+      notifyDailyDcaSuccess: true,
+      notifyDeepBuySuccess: true,
+      notifyDeepBuyCooldownSkip: true,
       ...overrides,
     },
     {
@@ -175,7 +226,8 @@ async function sendAllMessageKinds(notifier) {
     kind: "trade-success",
     sent: await notifier.notifyTradeSuccess({
       wallet: "0xE4d5...0B6d",
-      strategy: "每日定投（测试）",
+      strategyId: "deep_discount_buy",
+      strategy: "深跌加仓（测试）",
       triggerPriceUsd: 0.00456,
       txHash: "0xtestsuccess123",
       explorerUrl: "https://basescan.org/tx/0xtestsuccess123",

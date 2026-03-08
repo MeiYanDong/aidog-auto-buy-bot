@@ -100,6 +100,9 @@ FEISHU_NOTIFY_RUNTIME_ISSUES=true
 FEISHU_NOTIFY_GUARD_EVENTS=true
 FEISHU_NOTIFY_DRY_RUN=false
 FEISHU_NOTIFY_WEEKLY_SUMMARY=true
+FEISHU_NOTIFY_DAILY_DCA_SUCCESS=false
+FEISHU_NOTIFY_DEEP_BUY_SUCCESS=true
+FEISHU_NOTIFY_DEEP_BUY_COOLDOWN_SKIP=false
 ```
 
 `FEISHU_SECRET` is optional. Only fill it if your Feishu bot has "签名校验" enabled.
@@ -107,11 +110,17 @@ FEISHU_NOTIFY_WEEKLY_SUMMARY=true
 Recommended push events:
 
 - Bot start or restart
-- Successful filled trade, including strategy, trigger price, spent USDC, received AIDOG, and tx hash
+- Successful deep-discount buy, including strategy, trigger price, spent USDC, received AIDOG, and tx hash
 - Final failed trade after retries
-- Guard blocks: low gas, insufficient USDC, daily budget reached, daily count reached, deep-buy cooldown active
+- Guard blocks: low gas, insufficient USDC, daily budget reached, daily count reached
 - Runtime issues such as repeated price request failures
 - Weekly summary card for the previous week
+
+Default notification profile in this repo:
+
+- Daily DCA success notifications are suppressed.
+- Deep-buy success notifications remain enabled.
+- "Deep-buy skipped because cooldown is active" notifications are suppressed.
 
 ## Weekly Summary
 

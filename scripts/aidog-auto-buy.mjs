@@ -64,6 +64,12 @@ const notifier = createFeishuNotifier(
     notifyGuardEvents: parseBoolean(process.env.FEISHU_NOTIFY_GUARD_EVENTS, true),
     notifyDryRun: parseBoolean(process.env.FEISHU_NOTIFY_DRY_RUN, false),
     notifyWeeklySummary: parseBoolean(process.env.FEISHU_NOTIFY_WEEKLY_SUMMARY, true),
+    notifyDailyDcaSuccess: parseBoolean(process.env.FEISHU_NOTIFY_DAILY_DCA_SUCCESS, false),
+    notifyDeepBuySuccess: parseBoolean(process.env.FEISHU_NOTIFY_DEEP_BUY_SUCCESS, true),
+    notifyDeepBuyCooldownSkip: parseBoolean(
+      process.env.FEISHU_NOTIFY_DEEP_BUY_COOLDOWN_SKIP,
+      false,
+    ),
   },
   logger,
 );
@@ -1234,12 +1240,12 @@ async function processSkipEvents(skips) {
 
     logger.warn(skip.message, skip.context);
     if (skip.signature === "deep-buy-cooldown") {
-      incrementWeeklyCounter("guardCount");
       await notifier.notifyGuard(skip.message, [
         `钱包：${shortAddress(walletAddress)}`,
         `详情：${JSON.stringify(skip.context)}`,
       ], {
         throttleKey: skip.signature,
+        guardType: skip.signature,
       });
     }
   }
@@ -1307,6 +1313,7 @@ async function recordSuccessfulTrade(strategy, trade, triggerPrice, tradingTime)
   });
 
   await notifier.notifyTradeSuccess({
+    strategyId: strategy.id,
     wallet: shortAddress(walletAddress),
     strategy: strategy.label,
     triggerPriceUsd: Number(triggerPrice.toFixed(8)),
