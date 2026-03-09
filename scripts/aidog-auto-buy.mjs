@@ -1029,6 +1029,7 @@ async function maybeSendWeeklySummary(tradingTime, tradingWeek) {
 
   const sent = await notifier.notifyWeeklySummary({
     wallet: shortAddress(walletAddress),
+    weekTitle: formatWeekTitle(state.previousWeekly.weekStartDayKey),
     periodLabel: `${state.previousWeekly.weekStartDayKey} ~ ${state.previousWeekly.weekEndDayKey}`,
     totalBuyCount: state.previousWeekly.buyCount,
     totalSpentUsdc: ethers.formatUnits(state.previousWeekly.spentUsdcBaseUnits, 6),
@@ -1667,4 +1668,21 @@ async function notifyTradeFailure(strategy, error, triggerPrice, attempt) {
 
 function pad2(value) {
   return String(value).padStart(2, "0");
+}
+
+function formatWeekTitle(weekStartDayKey) {
+  const weekStart = new Date(`${weekStartDayKey}T00:00:00.000Z`);
+  if (Number.isNaN(weekStart.getTime())) {
+    return String(weekStartDayKey || "每周汇总");
+  }
+
+  const isoWeekYear = weekStart.getUTCFullYear();
+  const firstThursday = new Date(Date.UTC(isoWeekYear, 0, 4));
+  const firstWeekday = firstThursday.getUTCDay() || 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - (firstWeekday - 1));
+
+  const diffDays = Math.round((weekStart.getTime() - firstThursday.getTime()) / 86400000);
+  const weekNumber = Math.floor(diffDays / 7) + 1;
+
+  return `${isoWeekYear}-W${pad2(weekNumber)}`;
 }

@@ -301,6 +301,7 @@ async function sendAllMessageKinds(notifier) {
   results.push({
     kind: "weekly-summary",
     sent: await notifier.notifyWeeklySummary({
+      weekTitle: "2026-W09",
       periodLabel: "2026-02-23 ~ 2026-03-01",
       totalBuyCount: 3,
       totalSpentUsdc: "14.0",
@@ -354,13 +355,17 @@ function validatePayloads(payloads) {
   assert.match(dryRunText, /钱包 AIDOG\s+440/);
 
   const weeklySummaryText = collectCardText(
-    payloads.find((payload) => payload.card.header.title.content.includes("每周汇总")),
+    payloads.find((payload) => payload.card.header.title.content.includes("2026-W09")),
   );
   assert.match(weeklySummaryText, /总收到\s+3080 AIDOG/);
   assert.match(weeklySummaryText, /每日定投\s+2 次 \/ 4\.0 USDC \/ 880 AIDOG/);
   assert.match(weeklySummaryText, /深跌加仓\s+1 次 \/ 10\.0 USDC \/ 2200 AIDOG/);
   assert.match(weeklySummaryText, /当前 AIDOG\s+440/);
   assert.match(weeklySummaryText, /最近成交\s+深跌加仓（测试） \/ 10\.0 USDC \/ 2200 AIDOG/);
+  assert.equal(
+    payloads.find((payload) => payload.card.header.title.content.includes("2026-W09")).card.header.title.content,
+    "[AIDOG Bot 测试] 2026-W09",
+  );
 
   assert.ok(
     payloads.some((payload) =>

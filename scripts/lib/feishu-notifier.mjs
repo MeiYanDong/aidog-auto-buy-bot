@@ -147,7 +147,7 @@ export function createFeishuNotifier(config, logger) {
         lines.push(`最近成交哈希：${payload.lastTrade.txHash}`);
       }
 
-      return send("每周汇总", lines, {
+      return send(payload.weekTitle || "每周汇总", lines, {
         actions: buildWeeklySummaryActions(payload),
         template: "blue",
         throttleKey: `weekly-summary:${payload.periodLabel}`,
