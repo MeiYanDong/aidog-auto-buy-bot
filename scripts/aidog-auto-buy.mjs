@@ -25,6 +25,7 @@ import {
   saveJsonFile,
 } from "./lib/runtime.mjs";
 import { createFeishuNotifier } from "./lib/feishu-notifier.mjs";
+import { recoverTradeAmounts } from "./lib/trade-recovery.mjs";
 
 const ERC20_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
@@ -413,6 +414,8 @@ async function attemptBuy(strategy, triggerPrice, attemptNumber, tradingTime) {
     tradingDayKey: tradingTime.dayKey,
     route: route || "n/a",
     sentAtMs: Date.now(),
+    amountBaseUnits: strategy.amountBaseUnits.toString(),
+    quotedAidogBaseUnits: quote.toTokenAmount.toString(),
     walletSnapshotBefore: serializeWalletSnapshot(walletSnapshot),
   });
 
@@ -688,6 +691,12 @@ function normalizePendingTx(rawPendingTx) {
     tradingDayKey: rawPendingTx.tradingDayKey ? String(rawPendingTx.tradingDayKey) : null,
     route: String(rawPendingTx.route || ""),
     sentAtMs: Number(rawPendingTx.sentAtMs || 0),
+    amountBaseUnits: rawPendingTx.amountBaseUnits
+      ? String(rawPendingTx.amountBaseUnits)
+      : null,
+    quotedAidogBaseUnits: rawPendingTx.quotedAidogBaseUnits
+      ? String(rawPendingTx.quotedAidogBaseUnits)
+      : null,
     walletSnapshotBefore: rawPendingTx.walletSnapshotBefore
       ? {
           baseEthBalance: String(rawPendingTx.walletSnapshotBefore.baseEthBalance || "0"),
@@ -784,6 +793,66 @@ function deserializeWalletSnapshot(snapshot) {
     usdcBalance: BigInt(snapshot.usdcBalance),
     aidogBalance: BigInt(snapshot.aidogBalance),
   };
+}
+
+function getWeeklyTradeBucket(summaryWeek) {
+  if (!state.weekly) {
+    state.weekly = createBlankWeeklyState(getTradingWeekInfo());
+  }
+
+  if (!summaryWeek?.weekKey || state.weekly.periodKey === summaryWeek.weekKey) {
+    return {
+      bucketName: "weekly",
+      bucket: state.weekly,
+    };
+  }
+
+  if (state.previousWeekly?.periodKey === summaryWeek.weekKey) {
+    return {
+      bucketName: "previousWeekly",
+      bucket: state.previousWeekly,
+    };
+  }
+
+  logger.warn("Recovered trade week did not match current summary buckets", {
+    summaryWeek: summaryWeek?.weekKey || "n/a",
+    currentWeek: state.weekly.periodKey,
+    previousWeek: state.previousWeekly?.periodKey || "n/a",
+  });
+
+  return {
+    bucketName: "weekly",
+    bucket: state.weekly,
+  };
+}
+
+function shouldReplaceLastTrade(existingTrade, executedAtMs) {
+  if (!existingTrade?.executedAtMs) {
+    return true;
+  }
+
+  return Number(existingTrade.executedAtMs) <= Number(executedAtMs);
+}
+
+async function resolveReceiptExecutedAtMs(receipt, fallbackMs) {
+  if (!receipt?.blockNumber) {
+    return fallbackMs;
+  }
+
+  try {
+    const block = await provider.getBlock(receipt.blockNumber);
+    if (block?.timestamp) {
+      return Number(block.timestamp) * 1000;
+    }
+  } catch (error) {
+    logger.warn("Receipt block lookup failed", {
+      txHash: receipt.hash,
+      blockNumber: receipt.blockNumber,
+      ...serializeError(error),
+    });
+  }
+
+  return fallbackMs;
 }
 
 function acquireProcessLock() {
@@ -1004,22 +1073,35 @@ function isWeeklySummaryDue(tradingTime, tradingWeek) {
   );
 }
 
-function recordWeeklyTrade(strategy, spentBaseUnits, receivedBaseUnits, tradeMeta) {
-  if (!state.weekly) {
-    state.weekly = createBlankWeeklyState(getTradingWeekInfo());
+function recordWeeklyTrade(strategy, spentBaseUnits, receivedBaseUnits, tradeMeta, summaryWeek) {
+  const { bucketName, bucket } = getWeeklyTradeBucket(summaryWeek);
+
+  bucket.buyCount += 1;
+  bucket.spentUsdcBaseUnits = (BigInt(bucket.spentUsdcBaseUnits) + spentBaseUnits).toString();
+  bucket.receivedAidogBaseUnits = (BigInt(bucket.receivedAidogBaseUnits) + receivedBaseUnits).toString();
+  bucket.strategies[strategy.id].buyCount += 1;
+  bucket.strategies[strategy.id].spentUsdcBaseUnits = (
+    BigInt(bucket.strategies[strategy.id].spentUsdcBaseUnits) + spentBaseUnits
+  ).toString();
+  bucket.strategies[strategy.id].receivedAidogBaseUnits = (
+    BigInt(bucket.strategies[strategy.id].receivedAidogBaseUnits) + receivedBaseUnits
+  ).toString();
+
+  if (shouldReplaceLastTrade(bucket.lastTrade, tradeMeta.executedAtMs)) {
+    bucket.lastTrade = tradeMeta;
   }
 
-  state.weekly.buyCount += 1;
-  state.weekly.spentUsdcBaseUnits = (BigInt(state.weekly.spentUsdcBaseUnits) + spentBaseUnits).toString();
-  state.weekly.receivedAidogBaseUnits = (BigInt(state.weekly.receivedAidogBaseUnits) + receivedBaseUnits).toString();
-  state.weekly.strategies[strategy.id].buyCount += 1;
-  state.weekly.strategies[strategy.id].spentUsdcBaseUnits = (
-    BigInt(state.weekly.strategies[strategy.id].spentUsdcBaseUnits) + spentBaseUnits
-  ).toString();
-  state.weekly.strategies[strategy.id].receivedAidogBaseUnits = (
-    BigInt(state.weekly.strategies[strategy.id].receivedAidogBaseUnits) + receivedBaseUnits
-  ).toString();
-  state.weekly.lastTrade = tradeMeta;
+  if (
+    bucketName === "previousWeekly" &&
+    state.previousWeekly?.periodKey &&
+    state.notifications.lastWeeklySummaryPeriodKey === state.previousWeekly.periodKey
+  ) {
+    logger.warn("Recovered trade updated an already-sent weekly summary", {
+      periodKey: state.previousWeekly.periodKey,
+      txHash: tradeMeta.txHash,
+    });
+    state.notifications.lastWeeklySummaryPeriodKey = "";
+  }
 }
 
 function incrementWeeklyCounter(counterName) {
@@ -1120,8 +1202,29 @@ async function reconcilePendingTransaction(tradingTime) {
 
   const walletSnapshotBefore = pendingTx.walletSnapshotBefore
     ? deserializeWalletSnapshot(pendingTx.walletSnapshotBefore)
-    : await getWalletSnapshot();
+    : null;
   const postTradeSnapshot = await getWalletSnapshot();
+  const executedAtMs = await resolveReceiptExecutedAtMs(receipt, pendingTx.sentAtMs || Date.now());
+  const summaryWeek = getTradingWeekInfo(new Date(executedAtMs));
+  const recoveredAmounts = recoverTradeAmounts({
+    receipt,
+    walletAddress,
+    spentTokenAddress: BASE_USDC_TOKEN_ADDRESS,
+    receivedTokenAddress: AIDOG_TOKEN_ADDRESS,
+    fallbackSpentBaseUnits: pendingTx.amountBaseUnits || strategy.amountBaseUnits.toString(),
+    fallbackReceivedBaseUnits: pendingTx.quotedAidogBaseUnits || "0",
+    walletSnapshotBefore,
+    walletSnapshotAfter: postTradeSnapshot,
+  });
+
+  logger.info("Recovered swap trade amounts", {
+    strategy: strategy.id,
+    txHash: pendingTx.txHash,
+    spentUsdc: ethers.formatUnits(recoveredAmounts.spentBaseUnits, 6),
+    spentSource: recoveredAmounts.spentSource,
+    receivedAidog: ethers.formatUnits(recoveredAmounts.receivedBaseUnits, 18),
+    receivedSource: recoveredAmounts.receivedSource,
+  });
 
   await recordSuccessfulTrade(
     strategy,
@@ -1129,13 +1232,19 @@ async function reconcilePendingTransaction(tradingTime) {
       route: pendingTx.route || "n/a",
       receipt,
       swapHash: pendingTx.txHash,
-      usdcDelta: walletSnapshotBefore.usdcBalance - postTradeSnapshot.usdcBalance,
-      aidogDelta: postTradeSnapshot.aidogBalance - walletSnapshotBefore.aidogBalance,
+      usdcDelta: recoveredAmounts.spentBaseUnits,
+      aidogDelta: recoveredAmounts.receivedBaseUnits,
+      amountSource: {
+        spent: recoveredAmounts.spentSource,
+        received: recoveredAmounts.receivedSource,
+      },
       postTradeSnapshot,
     },
     pendingTx.triggerPriceUsd || 0,
     {
       dayKey: pendingTx.tradingDayKey || tradingTime.dayKey,
+      executedAtMs,
+      summaryWeek,
     },
   );
 
@@ -1253,9 +1362,20 @@ async function processSkipEvents(skips) {
   activeSkipSignatures = nextActive;
 }
 
-async function recordSuccessfulTrade(strategy, trade, triggerPrice, tradingTime) {
+async function recordSuccessfulTrade(strategy, trade, triggerPrice, tradingTime, options = {}) {
   const spent = BigInt(trade.usdcDelta);
   const received = BigInt(trade.aidogDelta);
+  const executedAtMs = Number(options.executedAtMs || Date.now());
+  const summaryWeek = options.summaryWeek || getTradingWeekInfo(new Date(executedAtMs));
+  const tradeMeta = {
+    executedAtMs,
+    strategyId: strategy.id,
+    strategyLabel: strategy.label,
+    txHash: trade.swapHash,
+    spentUsdc: ethers.formatUnits(spent, 6),
+    receivedAidog: ethers.formatUnits(received, 18),
+    blockNumber: trade.receipt.blockNumber,
+  };
 
   clearFailureState();
   clearPendingTransaction();
@@ -1264,38 +1384,32 @@ async function recordSuccessfulTrade(strategy, trade, triggerPrice, tradingTime)
   state.daily.receivedAidogBaseUnits = (
     BigInt(state.daily.receivedAidogBaseUnits) + received
   ).toString();
-  recordWeeklyTrade(strategy, spent, received, {
-    executedAtMs: Date.now(),
-    strategyId: strategy.id,
-    strategyLabel: strategy.label,
-    txHash: trade.swapHash,
-    spentUsdc: ethers.formatUnits(spent, 6),
-    receivedAidog: ethers.formatUnits(received, 18),
-    blockNumber: trade.receipt.blockNumber,
-  });
+  recordWeeklyTrade(strategy, spent, received, tradeMeta, summaryWeek);
 
   if (strategy.id === "daily_dca") {
     state.strategies.daily_dca.lastExecutedDayKey = tradingTime.dayKey;
-    state.strategies.daily_dca.lastSuccessAtMs = Date.now();
+    state.strategies.daily_dca.lastSuccessAtMs = executedAtMs;
     state.strategies.daily_dca.lastSuccessTxHash = trade.swapHash;
   }
 
   if (strategy.id === "deep_discount_buy") {
-    state.strategies.deep_discount_buy.lastExecutedAtMs = Date.now();
+    state.strategies.deep_discount_buy.lastExecutedAtMs = executedAtMs;
     state.strategies.deep_discount_buy.lastSuccessTxHash = trade.swapHash;
   }
 
-  state.lastTrade = {
-    executedAtMs: Date.now(),
-    strategyId: strategy.id,
-    strategyLabel: strategy.label,
-    triggerPriceUsd: triggerPrice,
-    txHash: trade.swapHash,
-    spentUsdc: ethers.formatUnits(spent, 6),
-    receivedAidog: ethers.formatUnits(received, 18),
-    route: trade.route || "n/a",
-    blockNumber: trade.receipt.blockNumber,
-  };
+  if (shouldReplaceLastTrade(state.lastTrade, executedAtMs)) {
+    state.lastTrade = {
+      executedAtMs,
+      strategyId: strategy.id,
+      strategyLabel: strategy.label,
+      triggerPriceUsd: triggerPrice,
+      txHash: trade.swapHash,
+      spentUsdc: ethers.formatUnits(spent, 6),
+      receivedAidog: ethers.formatUnits(received, 18),
+      route: trade.route || "n/a",
+      blockNumber: trade.receipt.blockNumber,
+    };
+  }
 
   saveState();
 
@@ -1305,6 +1419,8 @@ async function recordSuccessfulTrade(strategy, trade, triggerPrice, tradingTime)
     blockNumber: trade.receipt.blockNumber,
     spentUsdc: ethers.formatUnits(spent, 6),
     receivedAidog: ethers.formatUnits(received, 18),
+    spentSource: trade.amountSource?.spent || "balance-delta",
+    receivedSource: trade.amountSource?.received || "balance-delta",
     gasUsed: trade.receipt.gasUsed.toString(),
     triggerPriceUsd: triggerPrice,
     route: trade.route || "n/a",

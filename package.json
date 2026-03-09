@@ -7,7 +7,8 @@
     "buy:aidog": "node ./scripts/aidog-auto-buy.mjs",
     "deploy:vps": "python ./scripts/deploy-vps.py",
     "test:feishu:mock": "node ./scripts/test-feishu-notifier.mjs --mode=mock",
-    "test:feishu:live": "node ./scripts/test-feishu-notifier.mjs --mode=live"
+    "test:feishu:live": "node ./scripts/test-feishu-notifier.mjs --mode=live",
+    "test:trade:recovery": "node ./scripts/test-trade-recovery.mjs"
   },
   "dependencies": {
     "ethers": "^6.15.0"

@@ -129,13 +129,14 @@ Add these values to `.env` if you want the bot to push a weekly summary card:
 ```dotenv
 WEEKLY_SUMMARY_ENABLED=true
 WEEKLY_SUMMARY_WEEKDAY=1
-WEEKLY_SUMMARY_HOUR=0
-WEEKLY_SUMMARY_MINUTE=10
+WEEKLY_SUMMARY_HOUR=7
+WEEKLY_SUMMARY_MINUTE=0
 ```
 
 - `WEEKLY_SUMMARY_WEEKDAY=1` means Monday, based on `TRADING_TIMEZONE`.
 - The bot summarizes the previous week and sends it after the configured time.
 - If the bot misses the exact time because the server was offline, it will catch up and send the summary after it comes back online.
+- Confirmed pending swaps are now recovered from on-chain transfer logs first, which prevents `0 USDC / 0 AIDOG` entries after a restart.
 - No heartbeat card is enabled in this project.
 
 ## systemd
