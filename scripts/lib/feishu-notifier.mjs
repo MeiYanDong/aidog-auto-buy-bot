@@ -39,12 +39,12 @@ export function createFeishuNotifier(config, logger) {
         `策略：${payload.strategy}`,
         `触发价格：${payload.triggerPriceUsd} USD`,
         `花费：${payload.spentUsdc} USDC`,
-        `收到：${payload.receivedAidog} AIDOG`,
+        `收到：${formatAidogDisplayValue(payload.receivedAidog)} AIDOG`,
         `路由：${payload.route}`,
         `交易哈希：${payload.txHash}`,
         `浏览器：${payload.explorerUrl}`,
         `交易后 USDC：${payload.walletUsdcAfter}`,
-        `交易后 AIDOG：${payload.walletAidogAfter}`,
+        `交易后 AIDOG：${formatAidogDisplayValue(payload.walletAidogAfter)}`,
         `当日买入次数：${payload.dailyBuyCount}`,
       ], {
         actions: buildTradeActions(payload),
@@ -107,11 +107,11 @@ export function createFeishuNotifier(config, logger) {
         `策略：${payload.strategy}`,
         `触发价格：${payload.triggerPriceUsd} USD`,
         `买入金额：${payload.buyAmountUsdc} USDC`,
-        `预计收到：${payload.expectedAidog} AIDOG`,
+        `预计收到：${formatAidogDisplayValue(payload.expectedAidog)} AIDOG`,
         `路由：${payload.route}`,
         `需要授权：${payload.needsApproval ? "是" : "否"}`,
         `钱包 USDC：${payload.walletUsdc}`,
-        `钱包 AIDOG：${payload.walletAidog}`,
+        `钱包 AIDOG：${formatAidogDisplayValue(payload.walletAidog)}`,
       ], {
         actions: buildTradeActions(payload),
         template: "grey",
@@ -128,21 +128,21 @@ export function createFeishuNotifier(config, logger) {
         `统计周期：${payload.periodLabel}`,
         `总买入次数：${payload.totalBuyCount}`,
         `总花费：${payload.totalSpentUsdc} USDC`,
-        `总收到：${payload.totalReceivedAidog} AIDOG`,
-        `每日定投：${payload.dailyDcaBuyCount} 次 / ${payload.dailyDcaSpentUsdc} USDC / ${payload.dailyDcaReceivedAidog} AIDOG`,
-        `深跌加仓：${payload.deepBuyCount} 次 / ${payload.deepBuySpentUsdc} USDC / ${payload.deepBuyReceivedAidog} AIDOG`,
+        `总收到：${formatAidogDisplayValue(payload.totalReceivedAidog)} AIDOG`,
+        `每日定投：${payload.dailyDcaBuyCount} 次 / ${payload.dailyDcaSpentUsdc} USDC / ${formatAidogDisplayValue(payload.dailyDcaReceivedAidog)} AIDOG`,
+        `深跌加仓：${payload.deepBuyCount} 次 / ${payload.deepBuySpentUsdc} USDC / ${formatAidogDisplayValue(payload.deepBuyReceivedAidog)} AIDOG`,
         `失败次数：${payload.failureCount}`,
         `风控拦截：${payload.guardCount}`,
         `运行异常：${payload.runtimeIssueCount}`,
         `当前 ETH：${payload.currentEth}`,
         `当前 USDC：${payload.currentUsdc}`,
-        `当前 AIDOG：${payload.currentAidog}`,
+        `当前 AIDOG：${formatAidogDisplayValue(payload.currentAidog)}`,
         `当前价格：${payload.currentPriceUsd} USD`,
       ];
 
       if (payload.lastTrade?.txHash) {
         lines.push(
-          `最近成交：${payload.lastTrade.strategyLabel} / ${payload.lastTrade.spentUsdc} USDC / ${payload.lastTrade.receivedAidog} AIDOG`,
+          `最近成交：${payload.lastTrade.strategyLabel} / ${payload.lastTrade.spentUsdc} USDC / ${formatAidogDisplayValue(payload.lastTrade.receivedAidog)} AIDOG`,
         );
         lines.push(`最近成交哈希：${payload.lastTrade.txHash}`);
       }
@@ -381,6 +381,25 @@ function formatCardTime(date) {
   const minute = String(date.getMinutes()).padStart(2, "0");
   const second = String(date.getSeconds()).padStart(2, "0");
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function formatAidogDisplayValue(value) {
+  const rawValue = String(value ?? "").trim();
+  if (!rawValue || /^n\/a$/i.test(rawValue)) {
+    return rawValue;
+  }
+
+  const match = rawValue.match(/^(-?\d+)(?:\.\d+)?$/);
+  if (!match) {
+    return rawValue;
+  }
+
+  const integerPart = match[1];
+  if (integerPart === "-0") {
+    return "0";
+  }
+
+  return integerPart;
 }
 
 function buildTradeActions(payload) {

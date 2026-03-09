@@ -341,6 +341,27 @@ function validatePayloads(payloads) {
     assert.ok(payload.sign, "Signed payload should include sign.");
   }
 
+  const tradeSuccessText = collectCardText(
+    payloads.find((payload) => payload.card.header.title.content.includes("买入成功")),
+  );
+  assert.match(tradeSuccessText, /收到\s+440 AIDOG/);
+  assert.match(tradeSuccessText, /交易后 AIDOG\s+880/);
+
+  const dryRunText = collectCardText(
+    payloads.find((payload) => payload.card.header.title.content.includes("模拟触发")),
+  );
+  assert.match(dryRunText, /预计收到\s+439 AIDOG/);
+  assert.match(dryRunText, /钱包 AIDOG\s+440/);
+
+  const weeklySummaryText = collectCardText(
+    payloads.find((payload) => payload.card.header.title.content.includes("每周汇总")),
+  );
+  assert.match(weeklySummaryText, /总收到\s+3080 AIDOG/);
+  assert.match(weeklySummaryText, /每日定投\s+2 次 \/ 4\.0 USDC \/ 880 AIDOG/);
+  assert.match(weeklySummaryText, /深跌加仓\s+1 次 \/ 10\.0 USDC \/ 2200 AIDOG/);
+  assert.match(weeklySummaryText, /当前 AIDOG\s+440/);
+  assert.match(weeklySummaryText, /最近成交\s+深跌加仓（测试） \/ 10\.0 USDC \/ 2200 AIDOG/);
+
   assert.ok(
     payloads.some((payload) =>
       payload.card.elements.some((element) => element.tag === "action" && Array.isArray(element.actions) && element.actions.length > 0),
@@ -352,4 +373,22 @@ function validatePayloads(payloads) {
 function getArgValue(name) {
   const arg = process.argv.find((item) => item.startsWith(`${name}=`));
   return arg ? arg.slice(name.length + 1) : "";
+}
+
+function collectCardText(payload) {
+  return payload.card.elements
+    .flatMap((element) => {
+      if (element.text?.content) {
+        return [element.text.content];
+      }
+
+      if (Array.isArray(element.fields)) {
+        return element.fields
+          .map((field) => field?.text?.content)
+          .filter(Boolean);
+      }
+
+      return [];
+    })
+    .join("\n");
 }
