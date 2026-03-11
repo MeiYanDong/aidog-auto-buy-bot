@@ -43,6 +43,42 @@ export function recoverTradeAmounts({
   };
 }
 
+export function mergeTradeSnapshotWithRecoveredAmounts({
+  walletSnapshotBefore,
+  walletSnapshotAfter,
+  spentBaseUnits,
+  receivedBaseUnits,
+}) {
+  if (!walletSnapshotBefore) {
+    return walletSnapshotAfter;
+  }
+
+  if (!walletSnapshotAfter) {
+    return {
+      baseEthBalance: toBigInt(walletSnapshotBefore.baseEthBalance),
+      usdcBalance: deriveUsdcBalanceAfter(walletSnapshotBefore.usdcBalance, spentBaseUnits),
+      aidogBalance: deriveAidogBalanceAfter(walletSnapshotBefore.aidogBalance, receivedBaseUnits),
+    };
+  }
+
+  const beforeUsdc = toBigInt(walletSnapshotBefore.usdcBalance);
+  const afterUsdc = toBigInt(walletSnapshotAfter.usdcBalance);
+  const beforeAidog = toBigInt(walletSnapshotBefore.aidogBalance);
+  const afterAidog = toBigInt(walletSnapshotAfter.aidogBalance);
+  const spent = toBigInt(spentBaseUnits);
+  const received = toBigInt(receivedBaseUnits);
+
+  return {
+    baseEthBalance: toBigInt(walletSnapshotAfter.baseEthBalance),
+    usdcBalance: shouldUseDerivedUsdcBalance(beforeUsdc, afterUsdc, spent)
+      ? deriveUsdcBalanceAfter(beforeUsdc, spent)
+      : afterUsdc,
+    aidogBalance: shouldUseDerivedAidogBalance(beforeAidog, afterAidog, received)
+      ? deriveAidogBalanceAfter(beforeAidog, received)
+      : afterAidog,
+  };
+}
+
 export function extractTokenTransfersFromReceipt({
   receipt,
   walletAddress,
@@ -126,6 +162,36 @@ function pickAmount(candidates) {
     amount: 0n,
     source: "zero",
   };
+}
+
+function shouldUseDerivedUsdcBalance(beforeUsdc, afterUsdc, spentBaseUnits) {
+  const spent = toBigInt(spentBaseUnits);
+  if (spent <= 0n) {
+    return false;
+  }
+
+  const observedSpent = beforeUsdc > afterUsdc ? beforeUsdc - afterUsdc : 0n;
+  return observedSpent === 0n || observedSpent < spent;
+}
+
+function shouldUseDerivedAidogBalance(beforeAidog, afterAidog, receivedBaseUnits) {
+  const received = toBigInt(receivedBaseUnits);
+  if (received <= 0n) {
+    return false;
+  }
+
+  const observedReceived = afterAidog > beforeAidog ? afterAidog - beforeAidog : 0n;
+  return observedReceived === 0n || observedReceived < received;
+}
+
+function deriveUsdcBalanceAfter(beforeUsdc, spentBaseUnits) {
+  const before = toBigInt(beforeUsdc);
+  const spent = toBigInt(spentBaseUnits);
+  return before > spent ? before - spent : 0n;
+}
+
+function deriveAidogBalanceAfter(beforeAidog, receivedBaseUnits) {
+  return toBigInt(beforeAidog) + toBigInt(receivedBaseUnits);
 }
 
 function toBigInt(value) {

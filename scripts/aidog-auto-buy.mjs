@@ -25,7 +25,10 @@ import {
   saveJsonFile,
 } from "./lib/runtime.mjs";
 import { createFeishuNotifier } from "./lib/feishu-notifier.mjs";
-import { recoverTradeAmounts } from "./lib/trade-recovery.mjs";
+import {
+  mergeTradeSnapshotWithRecoveredAmounts,
+  recoverTradeAmounts,
+} from "./lib/trade-recovery.mjs";
 
 const ERC20_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
@@ -264,6 +267,10 @@ async function executeSignal(strategy, triggerPrice, tradingTime) {
         ...details,
       });
 
+      if (shouldResetSignerNonce(error)) {
+        resetSignerNonce();
+      }
+
       if (!retryable || attempt >= CONFIG.maxTradeAttempts) {
         state.runtime.lastFailureAtMs = Date.now();
         state.runtime.lastFailureReason = `${strategy.id}: ${details.message || "trade failed"}`;
@@ -351,7 +358,7 @@ async function attemptBuy(strategy, triggerPrice, attemptNumber, tradingTime) {
   }
 
   if (allowance < strategy.amountBaseUnits) {
-    const approvalTx = await signer.sendTransaction({
+    const approvalTx = await sendTransactionWithSyncedNonce({
       to: BASE_USDC_TOKEN_ADDRESS,
       data: approveInfo.data,
       gasLimit: padGasLimit(approveInfo.gasLimit),
@@ -399,7 +406,7 @@ async function attemptBuy(strategy, triggerPrice, attemptNumber, tradingTime) {
     value: swapResult.tx.value,
   });
 
-  const swapTx = await signer.sendTransaction({
+  const swapTx = await sendTransactionWithSyncedNonce({
     to: swapResult.tx.to,
     data: swapResult.tx.data,
     value: swapResult.tx.value,
@@ -428,15 +435,35 @@ async function attemptBuy(strategy, triggerPrice, attemptNumber, tradingTime) {
 
   const receipt = await swapTx.wait(CONFIG.confirmationsRequired);
   const postTradeSnapshot = await getWalletSnapshot();
+  const recoveredAmounts = recoverTradeAmounts({
+    receipt,
+    walletAddress,
+    spentTokenAddress: BASE_USDC_TOKEN_ADDRESS,
+    receivedTokenAddress: AIDOG_TOKEN_ADDRESS,
+    fallbackSpentBaseUnits: strategy.amountBaseUnits.toString(),
+    fallbackReceivedBaseUnits: quote.toTokenAmount.toString(),
+    walletSnapshotBefore: walletSnapshot,
+    walletSnapshotAfter: postTradeSnapshot,
+  });
+  const normalizedPostTradeSnapshot = mergeTradeSnapshotWithRecoveredAmounts({
+    walletSnapshotBefore: walletSnapshot,
+    walletSnapshotAfter: postTradeSnapshot,
+    spentBaseUnits: recoveredAmounts.spentBaseUnits,
+    receivedBaseUnits: recoveredAmounts.receivedBaseUnits,
+  });
 
   return {
     status: "executed",
     route,
     receipt,
     swapHash: swapTx.hash,
-    usdcDelta: walletSnapshot.usdcBalance - postTradeSnapshot.usdcBalance,
-    aidogDelta: postTradeSnapshot.aidogBalance - walletSnapshot.aidogBalance,
-    postTradeSnapshot,
+    usdcDelta: recoveredAmounts.spentBaseUnits,
+    aidogDelta: recoveredAmounts.receivedBaseUnits,
+    amountSource: {
+      spent: recoveredAmounts.spentSource,
+      received: recoveredAmounts.receivedSource,
+    },
+    postTradeSnapshot: normalizedPostTradeSnapshot,
   };
 }
 
@@ -1217,6 +1244,12 @@ async function reconcilePendingTransaction(tradingTime) {
     walletSnapshotBefore,
     walletSnapshotAfter: postTradeSnapshot,
   });
+  const normalizedPostTradeSnapshot = mergeTradeSnapshotWithRecoveredAmounts({
+    walletSnapshotBefore,
+    walletSnapshotAfter: postTradeSnapshot,
+    spentBaseUnits: recoveredAmounts.spentBaseUnits,
+    receivedBaseUnits: recoveredAmounts.receivedBaseUnits,
+  });
 
   logger.info("Recovered swap trade amounts", {
     strategy: strategy.id,
@@ -1239,7 +1272,7 @@ async function reconcilePendingTransaction(tradingTime) {
         spent: recoveredAmounts.spentSource,
         received: recoveredAmounts.receivedSource,
       },
-      postTradeSnapshot,
+      postTradeSnapshot: normalizedPostTradeSnapshot,
     },
     pendingTx.triggerPriceUsd || 0,
     {
@@ -1598,7 +1631,7 @@ function isRetryableTradeError(error) {
   }
 
   const text = `${error.code || ""} ${error.shortMessage || ""} ${error.message || ""}`;
-  return /HTTP 429|50011|fetch failed|timeout|timed out|CALL_EXCEPTION|execution reverted|replacement fee too low|nonce has already been used/i.test(
+  return /HTTP 429|50011|fetch failed|timeout|timed out|CALL_EXCEPTION|execution reverted|replacement fee too low|NONCE_EXPIRED|nonce too low|nonce has already been used/i.test(
     text,
   );
 }
@@ -1625,6 +1658,44 @@ function serializeError(error) {
 
 function padGasLimit(value) {
   return BigInt(Math.ceil(Number(value) * CONFIG.gasLimitMultiplier));
+}
+
+async function sendTransactionWithSyncedNonce(txRequest) {
+  if (!signer) {
+    throw createBotError("MISSING_PRIVATE_KEY", "BASE_PRIVATE_KEY is required when DRY_RUN=false.");
+  }
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    resetSignerNonce();
+    try {
+      return await signer.sendTransaction(txRequest);
+    } catch (error) {
+      if (!shouldResetSignerNonce(error) || attempt >= 2) {
+        throw error;
+      }
+
+      logger.warn("Retrying transaction after nonce reset", {
+        attempt,
+        ...serializeError(error),
+      });
+      await sleep(CONFIG.tradeRetryBaseMs);
+    }
+  }
+
+  throw new Error("Transaction send exhausted retries");
+}
+
+function resetSignerNonce() {
+  if (!signer) {
+    return;
+  }
+
+  signer.reset();
+}
+
+function shouldResetSignerNonce(error) {
+  const text = `${error?.code || ""} ${error?.shortMessage || ""} ${error?.message || ""}`;
+  return /NONCE_EXPIRED|nonce too low|nonce has already been used/i.test(text);
 }
 
 async function notifyTradeFailure(strategy, error, triggerPrice, attempt) {
