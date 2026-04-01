@@ -29,6 +29,13 @@ import {
   mergeTradeSnapshotWithRecoveredAmounts,
   recoverTradeAmounts,
 } from "./lib/trade-recovery.mjs";
+import {
+  clearDailyDcaSkip,
+  hasHandledDailyDcaForDay,
+  normalizeDailyDcaState,
+  rememberDailyDcaGuardFailure,
+  shouldPersistDailyDcaGuardFailure,
+} from "./lib/daily-dca-state.mjs";
 
 const ERC20_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
@@ -274,6 +281,13 @@ async function executeSignal(strategy, triggerPrice, tradingTime) {
       if (!retryable || attempt >= CONFIG.maxTradeAttempts) {
         state.runtime.lastFailureAtMs = Date.now();
         state.runtime.lastFailureReason = `${strategy.id}: ${details.message || "trade failed"}`;
+        if (strategy.id === "daily_dca" && shouldPersistDailyDcaGuardFailure(details.code)) {
+          state.strategies.daily_dca = rememberDailyDcaGuardFailure(
+            state.strategies.daily_dca,
+            tradingTime.dayKey,
+            details.code,
+          );
+        }
         saveState();
         await notifyTradeFailure(strategy, error, triggerPrice, attempt);
         return "continue";
@@ -646,6 +660,8 @@ function loadState() {
           lastExecutedDayKey: "",
           lastSuccessAtMs: 0,
           lastSuccessTxHash: "",
+          lastSkippedDayKey: "",
+          lastSkipCode: "",
         },
         deep_discount_buy: {
           lastExecutedAtMs: 0,
@@ -685,11 +701,7 @@ function normalizeState(rawState) {
       receivedAidogBaseUnits: String(rawState?.daily?.receivedAidogBaseUnits || "0"),
     },
     strategies: {
-      daily_dca: {
-        lastExecutedDayKey: String(rawState?.strategies?.daily_dca?.lastExecutedDayKey || ""),
-        lastSuccessAtMs: Number(rawState?.strategies?.daily_dca?.lastSuccessAtMs || 0),
-        lastSuccessTxHash: String(rawState?.strategies?.daily_dca?.lastSuccessTxHash || ""),
-      },
+      daily_dca: normalizeDailyDcaState(rawState?.strategies?.daily_dca),
       deep_discount_buy: {
         lastExecutedAtMs: Number(rawState?.strategies?.deep_discount_buy?.lastExecutedAtMs || 0),
         lastSuccessTxHash: String(rawState?.strategies?.deep_discount_buy?.lastSuccessTxHash || ""),
@@ -1330,7 +1342,7 @@ function evaluateDailyDcaStrategy(currentPrice, tradingTime) {
     return {};
   }
 
-  if (state.strategies.daily_dca.lastExecutedDayKey === tradingTime.dayKey) {
+  if (hasHandledDailyDcaForDay(state.strategies.daily_dca, tradingTime.dayKey)) {
     return {};
   }
 
@@ -1421,6 +1433,7 @@ async function recordSuccessfulTrade(strategy, trade, triggerPrice, tradingTime,
   recordWeeklyTrade(strategy, spent, received, tradeMeta, summaryWeek);
 
   if (strategy.id === "daily_dca") {
+    state.strategies.daily_dca = clearDailyDcaSkip(state.strategies.daily_dca);
     state.strategies.daily_dca.lastExecutedDayKey = tradingTime.dayKey;
     state.strategies.daily_dca.lastSuccessAtMs = executedAtMs;
     state.strategies.daily_dca.lastSuccessTxHash = trade.swapHash;
